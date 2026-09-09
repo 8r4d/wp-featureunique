@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name:       Feature Unique
- * Description:       Flags and reports duplicate use of images as featured images across posts. Warns in the Featured Image box, adds columns to the Posts and Media Library list tables, and provides a Tools report page.
- * Version:           1.1.0
+ * Description:       Flags and reports duplicate use of images as featured images across posts. Warns in the Featured Image box and picker modal, adds columns to the Posts and Media Library list tables, and provides a Tools report page.
+ * Version:           1.3.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Brad Salomons
@@ -46,13 +46,24 @@ class Feature_Unique {
 		add_filter( 'manage_media_columns', array( __CLASS__, 'add_media_list_column' ), PHP_INT_MAX );
 		add_action( 'manage_media_custom_column', array( __CLASS__, 'render_media_list_column' ), 10, 2 );
 
+		// Media modal (grid, Insert Media, and the block/classic editor's "Set Featured Image"
+		// picker all share this): add a field to the attachment details sidebar showing other
+		// posts already using the selected image as their featured image.
+		add_filter( 'attachment_fields_to_edit', array( __CLASS__, 'add_attachment_field' ), 10, 2 );
+
 		add_action( 'admin_menu', array( __CLASS__, 'add_report_page' ) );
 		add_action( 'admin_head', array( __CLASS__, 'print_admin_css' ) );
 	}
 
 	/**
-	 * Enqueues the block-editor warning script and hands it the current
-	 * duplicate map (only attachments used 2+ times) as window.featureUniqueData.
+	 * Enqueues the block-editor warning script and hands it the full
+	 * attachment_id => posts usage map as window.featureUniqueData.
+	 *
+	 * Unlike the old 'duplicates' map (attachments already used 2+ times),
+	 * this includes every attachment used as a featured image at all, since
+	 * the "Set Featured Image" picker needs to flag an image the moment it's
+	 * used on any other post, before it becomes a duplicate. 'media-views' is
+	 * an explicit dependency so wp.media exists before our script patches it.
 	 */
 	public static function enqueue_block_editor_assets() {
 		$screen = get_current_screen();
@@ -64,19 +75,15 @@ class Feature_Unique {
 		wp_enqueue_script(
 			'feature-unique-editor',
 			plugins_url( 'assets/js/editor.js', __FILE__ ),
-			array( 'wp-hooks', 'wp-element', 'wp-data' ),
-			'1.0.0',
+			array( 'wp-hooks', 'wp-element', 'wp-data', 'media-views' ),
+			'1.2.0',
 			true
 		);
 
-		$duplicates = array();
+		$usage = array();
 
 		foreach ( self::get_usage_map() as $thumbnail_id => $posts ) {
-			if ( count( $posts ) < 2 ) {
-				continue;
-			}
-
-			$duplicates[ $thumbnail_id ] = array_map(
+			$usage[ $thumbnail_id ] = array_map(
 				static function ( $post ) {
 					return array(
 						'id'       => $post['ID'],
@@ -88,7 +95,7 @@ class Feature_Unique {
 			);
 		}
 
-		wp_localize_script( 'feature-unique-editor', 'featureUniqueData', array( 'duplicates' => $duplicates ) );
+		wp_localize_script( 'feature-unique-editor', 'featureUniqueData', array( 'usage' => $usage ) );
 	}
 
 	/**
@@ -309,6 +316,62 @@ class Feature_Unique {
 		echo '</ul>';
 	}
 
+	/**
+	 * Adds a "Used as Featured Image On" field to the attachment details sidebar
+	 * rendered inside the media modal — including the block editor's and classic
+	 * editor's "Set Featured Image" picker, which both reuse this same view.
+	 *
+	 * Skipped when the image isn't used as a featured image anywhere (or is only
+	 * used on the post currently being edited, per the 'post_id' the modal sends).
+	 */
+	public static function add_attachment_field( $form_fields, $post ) {
+		if ( 0 !== strpos( (string) get_post_mime_type( $post ), 'image/' ) ) {
+			return $form_fields;
+		}
+
+		$exclude_post_id = isset( $_REQUEST['post_id'] ) ? absint( $_REQUEST['post_id'] ) : 0;
+		$other_uses      = self::get_other_uses( $post->ID, $exclude_post_id );
+
+		if ( empty( $other_uses ) ) {
+			return $form_fields;
+		}
+
+		$html = '<p class="feature-unique-modal-warning">';
+		$html .= esc_html(
+			sprintf(
+				/* translators: %d: number of other posts using this image as a featured image */
+				_n(
+					'Already used as the featured image on %d other post:',
+					'Already used as the featured image on %d other posts:',
+					count( $other_uses ),
+					'feature-unique'
+				),
+				count( $other_uses )
+			)
+		);
+		$html .= '</p><ul class="feature-unique-modal-used-on-list">';
+
+		foreach ( $other_uses as $used_post ) {
+			$html .= '<li>';
+			if ( current_user_can( 'edit_post', $used_post['ID'] ) ) {
+				$html .= '<a href="' . esc_url( get_edit_post_link( $used_post['ID'] ) ) . '" target="_blank" rel="noopener noreferrer">' . esc_html( get_the_title( $used_post['ID'] ) ) . '</a>';
+			} else {
+				$html .= esc_html( get_the_title( $used_post['ID'] ) );
+			}
+			$html .= '</li>';
+		}
+
+		$html .= '</ul>';
+
+		$form_fields['feature_unique_used_on'] = array(
+			'label' => __( 'Featured Image Use', 'feature-unique' ),
+			'input' => 'html',
+			'html'  => $html,
+		);
+
+		return $form_fields;
+	}
+
 	public static function add_report_page() {
 		add_management_page(
 			__( 'Find Duplicate Featured Images', 'feature-unique' ),
@@ -411,7 +474,9 @@ class Feature_Unique {
 		?>
 		<style>
 			.feature-unique-warning,
-			.feature-unique-block-warning p {
+			.feature-unique-block-warning p,
+			.feature-unique-modal-warning,
+			.feature-unique-picker-warning p {
 				color: #b32d2e;
 				font-weight: 600;
 				margin: 8px 0 4px;
@@ -421,10 +486,22 @@ class Feature_Unique {
 				list-style: disc;
 				font-size: 12px;
 			}
+			.feature-unique-picker-warning {
+				background: #fcf0f1;
+				border-left: 4px solid #b32d2e;
+				padding: 8px 12px;
+				margin: 0 0 12px;
+			}
+			.feature-unique-picker-warning ul {
+				margin: 0 0 4px 1.2em;
+				list-style: disc;
+				font-size: 12px;
+			}
 			.feature-unique-warning-list,
 			.feature-unique-dup-list,
 			.feature-unique-report-list,
-			.feature-unique-media-used-on-list {
+			.feature-unique-media-used-on-list,
+			.feature-unique-modal-used-on-list {
 				margin: 0 0 0 1.2em;
 				list-style: disc;
 				font-size: 12px;
