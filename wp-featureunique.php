@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Feature Unique
  * Description:       Flags and reports duplicate use of images as featured images across posts. Warns in the Featured Image box and picker modal, adds columns to the Posts and Media Library list tables, and provides a Tools report page.
- * Version:           1.3.0
+ * Version:           1.4.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Brad Salomons
@@ -76,7 +76,7 @@ class Feature_Unique {
 			'feature-unique-editor',
 			plugins_url( 'assets/js/editor.js', __FILE__ ),
 			array( 'wp-hooks', 'wp-element', 'wp-data', 'media-views' ),
-			'1.2.0',
+			'1.4.0',
 			true
 		);
 
@@ -496,6 +496,20 @@ class Feature_Unique {
 				margin: 0 0 4px 1.2em;
 				list-style: disc;
 				font-size: 12px;
+			}
+			.feature-unique-grid-badge {
+				position: absolute;
+				top: 4px;
+				right: 4px;
+				width: 20px;
+				height: 20px;
+				line-height: 20px;
+				text-align: center;
+				color: #fff;
+				background: #b32d2e;
+				border-radius: 50%;
+				box-shadow: 0 0 0 1px #fff;
+				font-size: 14px;
 			}
 			.feature-unique-warning-list,
 			.feature-unique-dup-list,

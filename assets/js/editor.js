@@ -130,5 +130,48 @@
 
 			return this;
 		};
+
+		/**
+		 * Grid thumbnails: badge any image already used as a featured image
+		 * elsewhere, so reuse is visible while browsing, before you click in.
+		 *
+		 * wp.media.view.Attachment.Details.render() calls
+		 * Attachment.prototype.render() internally (see above), so this same
+		 * patched function also fires for the Details pane. It's skipped
+		 * there since that pane already shows the full warning box.
+		 */
+		var originalAttachmentRender = wp.media.view.Attachment.prototype.render;
+
+		wp.media.view.Attachment.prototype.render = function () {
+			originalAttachmentRender.apply( this, arguments );
+
+			if ( this instanceof wp.media.view.Attachment.Details ) {
+				return this;
+			}
+
+			this.$el.find( '.feature-unique-grid-badge' ).remove();
+
+			if ( ! this.model || 'image' !== this.model.get( 'type' ) ) {
+				return this;
+			}
+
+			var others = getOtherUses( this.model.get( 'id' ) );
+
+			if ( 0 === others.length ) {
+				return this;
+			}
+
+			var doc = this.el.ownerDocument || document;
+			var badge = doc.createElement( 'span' );
+			badge.className = 'feature-unique-grid-badge dashicons dashicons-warning';
+			badge.title =
+				others.length === 1
+					? 'Already used as a featured image on 1 other post'
+					: 'Already used as a featured image on ' + others.length + ' other posts';
+
+			this.$el.append( badge );
+
+			return this;
+		};
 	}
 } )( window.wp );
