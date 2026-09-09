@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name:       Feature Unique
- * Description:       Flags and reports duplicate use of images as featured images across posts. Warns in the Featured Image box, adds a Posts list column, and provides a Tools report page.
- * Version:           1.0.1
+ * Description:       Flags and reports duplicate use of images as featured images across posts. Warns in the Featured Image box, adds columns to the Posts and Media Library list tables, and provides a Tools report page.
+ * Version:           1.1.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Brad Salomons
@@ -41,6 +41,10 @@ class Feature_Unique {
 		// the columns array (rather than appending to it) on the same filter.
 		add_filter( 'manage_' . self::POST_TYPE . '_posts_columns', array( __CLASS__, 'add_list_column' ), PHP_INT_MAX );
 		add_action( 'manage_' . self::POST_TYPE . '_posts_custom_column', array( __CLASS__, 'render_list_column' ), 10, 2 );
+
+		// Media Library: show which post(s), if any, use each attachment as their featured image.
+		add_filter( 'manage_media_columns', array( __CLASS__, 'add_media_list_column' ), PHP_INT_MAX );
+		add_action( 'manage_media_custom_column', array( __CLASS__, 'render_media_list_column' ), 10, 2 );
 
 		add_action( 'admin_menu', array( __CLASS__, 'add_report_page' ) );
 		add_action( 'admin_head', array( __CLASS__, 'print_admin_css' ) );
@@ -261,10 +265,54 @@ class Feature_Unique {
 		echo '</ul>';
 	}
 
+	/**
+	 * Adds a "Used as Featured Image On" column to the Media Library list table.
+	 */
+	public static function add_media_list_column( $columns ) {
+		$columns['feature_unique_used_on'] = __( 'Used as Featured Image On', 'feature-unique' );
+
+		return $columns;
+	}
+
+	/**
+	 * Renders the "Used as Featured Image On" column for each attachment,
+	 * listing every post (of self::POST_TYPE) that uses it as a featured image.
+	 */
+	public static function render_media_list_column( $column, $attachment_id ) {
+		if ( 'feature_unique_used_on' !== $column ) {
+			return;
+		}
+
+		$map   = self::get_usage_map();
+		$posts = isset( $map[ (int) $attachment_id ] ) ? $map[ (int) $attachment_id ] : array();
+
+		if ( empty( $posts ) ) {
+			echo '<span class="feature-unique-none">' . esc_html__( 'Not used', 'feature-unique' ) . '</span>';
+			return;
+		}
+
+		echo '<ul class="feature-unique-media-used-on-list">';
+
+		foreach ( $posts as $post ) {
+			echo '<li>';
+			if ( current_user_can( 'edit_post', $post['ID'] ) ) {
+				echo '<a href="' . esc_url( get_edit_post_link( $post['ID'] ) ) . '">' . esc_html( get_the_title( $post['ID'] ) ) . '</a>';
+			} else {
+				echo esc_html( get_the_title( $post['ID'] ) );
+			}
+			if ( 'publish' !== $post['post_status'] ) {
+				echo ' <span class="feature-unique-status">(' . esc_html( $post['post_status'] ) . ')</span>';
+			}
+			echo '</li>';
+		}
+
+		echo '</ul>';
+	}
+
 	public static function add_report_page() {
 		add_management_page(
-			__( 'Duplicate Featured Images', 'feature-unique' ),
-			__( 'Duplicate Featured Images', 'feature-unique' ),
+			__( 'Find Duplicate Featured Images', 'feature-unique' ),
+			__( 'Find Duplicate Featured Images', 'feature-unique' ),
 			'edit_posts',
 			'feature-unique-report',
 			array( __CLASS__, 'render_report_page' )
@@ -286,10 +334,10 @@ class Feature_Unique {
 		);
 
 		echo '<div class="wrap">';
-		echo '<h1>' . esc_html__( 'Duplicate Featured Images', 'feature-unique' ) . '</h1>';
+		echo '<h1>' . esc_html__( 'Find Duplicate Featured Images', 'feature-unique' ) . '</h1>';
 
 		if ( empty( $duplicates ) ) {
-			echo '<p>' . esc_html__( 'No image is currently used as the featured image on more than one post.', 'feature-unique' ) . '</p>';
+			echo '<p>' . esc_html__( 'Great! No image is currently used as the featured image on more than one post.', 'feature-unique' ) . '</p>';
 			echo '</div>';
 			return;
 		}
@@ -354,6 +402,7 @@ class Feature_Unique {
 
 		$relevant = ( 'post' === $screen->base && self::POST_TYPE === $screen->post_type )
 			|| ( 'edit' === $screen->base && self::POST_TYPE === $screen->post_type )
+			|| 'upload' === $screen->base
 			|| 'tools_page_feature-unique-report' === $screen->id;
 
 		if ( ! $relevant ) {
@@ -374,7 +423,8 @@ class Feature_Unique {
 			}
 			.feature-unique-warning-list,
 			.feature-unique-dup-list,
-			.feature-unique-report-list {
+			.feature-unique-report-list,
+			.feature-unique-media-used-on-list {
 				margin: 0 0 0 1.2em;
 				list-style: disc;
 				font-size: 12px;
