@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Feature Unique
  * Description:       Flags and reports duplicate use of images as featured images across posts. Warns in the Featured Image box, adds a Posts list column, and provides a Tools report page.
- * Version:           1.0.0
+ * Version:           1.0.1
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Brad Salomons
@@ -30,13 +30,61 @@ class Feature_Unique {
 	private static $usage_map = null;
 
 	public static function init() {
+		// Classic editor: the "Featured Image" metabox is server-rendered, so this filter works there.
 		add_filter( 'admin_post_thumbnail_html', array( __CLASS__, 'filter_featured_image_box' ), 10, 3 );
 
-		add_filter( 'manage_' . self::POST_TYPE . '_posts_columns', array( __CLASS__, 'add_list_column' ) );
+		// Block editor: the Featured Image panel is a React component and never calls the filter
+		// above, so it needs its own JS-side warning via the editor.PostFeaturedImage filter.
+		add_action( 'enqueue_block_editor_assets', array( __CLASS__, 'enqueue_block_editor_assets' ) );
+
+		// Priority PHP_INT_MAX so our column survives if another plugin/theme rebuilds
+		// the columns array (rather than appending to it) on the same filter.
+		add_filter( 'manage_' . self::POST_TYPE . '_posts_columns', array( __CLASS__, 'add_list_column' ), PHP_INT_MAX );
 		add_action( 'manage_' . self::POST_TYPE . '_posts_custom_column', array( __CLASS__, 'render_list_column' ), 10, 2 );
 
 		add_action( 'admin_menu', array( __CLASS__, 'add_report_page' ) );
 		add_action( 'admin_head', array( __CLASS__, 'print_admin_css' ) );
+	}
+
+	/**
+	 * Enqueues the block-editor warning script and hands it the current
+	 * duplicate map (only attachments used 2+ times) as window.featureUniqueData.
+	 */
+	public static function enqueue_block_editor_assets() {
+		$screen = get_current_screen();
+
+		if ( ! $screen || self::POST_TYPE !== $screen->post_type ) {
+			return;
+		}
+
+		wp_enqueue_script(
+			'feature-unique-editor',
+			plugins_url( 'assets/js/editor.js', __FILE__ ),
+			array( 'wp-hooks', 'wp-element', 'wp-data' ),
+			'1.0.0',
+			true
+		);
+
+		$duplicates = array();
+
+		foreach ( self::get_usage_map() as $thumbnail_id => $posts ) {
+			if ( count( $posts ) < 2 ) {
+				continue;
+			}
+
+			$duplicates[ $thumbnail_id ] = array_map(
+				static function ( $post ) {
+					return array(
+						'id'       => $post['ID'],
+						'title'    => get_the_title( $post['ID'] ),
+						'editLink' => get_edit_post_link( $post['ID'], 'raw' ),
+					);
+				},
+				$posts
+			);
+		}
+
+		wp_localize_script( 'feature-unique-editor', 'featureUniqueData', array( 'duplicates' => $duplicates ) );
 	}
 
 	/**
@@ -313,10 +361,16 @@ class Feature_Unique {
 		}
 		?>
 		<style>
-			.feature-unique-warning {
+			.feature-unique-warning,
+			.feature-unique-block-warning p {
 				color: #b32d2e;
 				font-weight: 600;
 				margin: 8px 0 4px;
+			}
+			.feature-unique-block-warning ul {
+				margin: 0 0 8px 1.2em;
+				list-style: disc;
+				font-size: 12px;
 			}
 			.feature-unique-warning-list,
 			.feature-unique-dup-list,
