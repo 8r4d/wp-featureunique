@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Feature Unique
  * Description:       Flags and reports duplicate use of images as featured images across posts. Warns in the Featured Image box and picker modal, adds columns to the Posts and Media Library list tables, and provides a Tools report page.
- * Version:           1.4.0
+ * Version:           1.0.4
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Brad Salomons
